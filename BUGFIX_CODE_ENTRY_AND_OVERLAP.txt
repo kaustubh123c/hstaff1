@@ -1,0 +1,13 @@
+H-STAFF BUG FIX: CODE ENTRY + SHIFT OVERLAP
+
+Fixes:
+1. Scheduled-shift workflow endpoint now reports start_verified based on the consumed Start Code record.
+2. Start-code verification accepts both Filled and Ongoing statuses. This matters when an existing attendance/QR flow has already moved the shift to Ongoing; the customer can still enter the required Start Code.
+3. Worker scheduled-shift code generation now consistently creates both Start and Finish codes together; it no longer creates an unusable already-consumed Start Code for Ongoing shifts.
+4. Worker code display and regenerate endpoints remain intact.
+5. Shift overlap validation now checks only live shifts (Open, Filled, Ongoing), not historical Completed/Cancelled shifts.
+6. Old shifts whose scheduled end time has already passed no longer block a new application even if an old application row remains.
+
+Validation:
+- `node --check` passed for marketplace.js, shifts.js, payments.js, and index.js.
+- Frontend production build was not run here; install dependencies and run the project's build command before deployment.

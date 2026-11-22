@@ -1,0 +1,24 @@
+HSTAFF - GITHUB UPLOAD
+
+1. Extract this folder.
+2. Open PowerShell in this folder.
+3. Check that .env and server/.env are NOT present.
+4. Run:
+   npm install
+   npm install --prefix server
+   npm run build
+5. If build succeeds, create an EMPTY PRIVATE repository named HStaff on GitHub.
+6. Run:
+   git init
+   git add .
+   git status
+   git commit -m "Prepare HStaff deployment"
+   git branch -M main
+   git remote add origin https://github.com/YOUR_USERNAME/HStaff.git
+   git push -u origin main
+
+Do not upload secrets, local database files, or the ZIP itself.
+
+Deployment notes are in DEPLOY_VERCEL.md.
+Database schema and persistent KYC storage must be verified/configured
+before production use. Do not run seed or migration scripts blindly.
