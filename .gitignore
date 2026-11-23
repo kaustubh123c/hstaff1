@@ -1,0 +1,56 @@
+# Dependencies and generated builds
+node_modules/
+**/node_modules/
+dist/
+.hstaff-build/
+.vercel/
+
+# Secrets and local environment files
+.env
+.env.*
+!.env.example
+server/.env
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local database files and backups
+server/data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.bak
+*.zip
+*.dump
+
+# Local uploads, logs, cache, and temporary files
+uploads/
+*.log
+*.tmp
+*.temp
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# IDE and OS generated files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Documentation, guides, notes, and PDFs (excluded per project specification)
+docs/
+documentation/
+*.pdf
+*.md
+*.txt
+!requirements.txt
+!**/requirements.txt
+
