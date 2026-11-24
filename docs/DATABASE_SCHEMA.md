@@ -28,3 +28,8 @@ SQLite database path defaults to `server/data/hstaff.db`; WAL and foreign keys a
 Current migrations add worker GPS/availability, on-demand shift metadata and OTP hashes, worker tracking coordinates, and payment collection/payout columns. They are additive and guarded by column inspection/duplicate-column handling. There is no formal numbered migration ledger yet. Keep SQL inserts column-qualified. `npm run seed` loads demo records; `npm run seed --prefix server -- --reset` is destructive and must only target a disposable database.
 
 Migrations also add `shifts.completion_requested_at` for worker-submitted/user-confirmed completion. OTP delivery relies on optional Twilio and a development-only code response. The schema currently uses `shifts` as the job record for both scheduled and on-demand work.
+
+
+## On-demand OTP deployment (PostgreSQL/Supabase)
+
+Run `server/migrations/2026-11-24-job-verification-otp.sql` once in the Supabase SQL Editor if `job_verifications` does not already exist. The table stores HMAC hashes for verification and AES-GCM ciphertext only while a worker needs to display an unused code. Start codes expire after 10 minutes; finish codes expire after 24 hours. The worker portal can view its assigned job's codes; the business verifies START on arrival and FINISH only after the job payment is marked `paid`. Both codes are single-use, with a five-attempt limit. Keep `DEV_OTP_ENABLED=false` in production.
