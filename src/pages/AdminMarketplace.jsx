@@ -7,6 +7,7 @@ export default function AdminMarketplace({ toast }) {
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('All');
+  const [sort, setSort] = useState('newest');
   const load = useCallback(async () => {
     setBusy(true);
     try { setJobs((await api('/jobs/mine')).jobs); }
@@ -15,7 +16,7 @@ export default function AdminMarketplace({ toast }) {
   }, [toast]);
   useEffect(() => { load(); const timer = setInterval(load, 15000); return () => clearInterval(timer); }, [load]);
   const filtered = useMemo(() => jobs.filter(job => (status === 'All' || job.status === status)
-    && `${job.title} ${job.company} ${job.worker_name || ''} ${job.location} ${job.id}`.toLowerCase().includes(query.toLowerCase())), [jobs, query, status]);
+    && `${job.title} ${job.company} ${job.worker_name || ''} ${job.location} ${job.id}`.toLowerCase().includes(query.toLowerCase())).sort((a,b) => sort === 'oldest' ? a.id-b.id : sort === 'rate-high' ? b.rate-a.rate : sort === 'rate-low' ? a.rate-b.rate : b.id-a.id), [jobs, query, status, sort]);
   const live = jobs.filter(job => job.status === 'Ongoing').length;
   const searching = jobs.filter(job => job.status === 'Open').length;
   const completed = jobs.filter(job => job.status === 'Completed').length;
@@ -38,6 +39,7 @@ export default function AdminMarketplace({ toast }) {
       <div className="filters admin-job-filters">
         <label className="admin-search"><Icon name="search" size={16} /><input placeholder="Search job, user, worker or location" value={query} onChange={event => setQuery(event.target.value)} aria-label="Search on-demand jobs" /></label>
         <select value={status} onChange={event => setStatus(event.target.value)} aria-label="Filter jobs by status">{['All', 'Open', 'Filled', 'Ongoing', 'Completed', 'Cancelled'].map(value => <option key={value}>{value}</option>)}</select>
+        <select value={sort} onChange={event => setSort(event.target.value)} aria-label="Sort jobs"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="rate-high">Highest rate</option><option value="rate-low">Lowest rate</option></select>
         <span className="muted">{filtered.length} shown</span>
       </div>
       {!filtered.length ? <Empty icon="shifts" title={jobs.length ? 'No matching jobs' : 'No on-demand jobs'} text={jobs.length ? 'Change your search or status filter.' : 'New User requests will appear here.'} /> :

@@ -50,7 +50,7 @@ export function Payments({ user, toast, language = 'en' }) {
         handler: async response => {
           try { await api(`/payments/${p.id}/verify-checkout`, { method: 'POST', body: response }); toast('Client payment verified. Worker payout is a separate step.'); state.reload(); }
           catch (error) { toast(error.message || 'Could not verify payment. Do not retry payment until status is checked.'); }
-        }, modal: { ondismiss: () => toast('Checkout closed. If you completed payment, refresh to check its status.') }, theme: { color: '#4f46e5' } });
+        }, modal: { ondismiss: () => toast('Checkout closed. If you completed payment, refresh to check its status.') }, theme: { color: '#7045D6' } });
       checkout.on('payment.failed', response => toast(response?.error?.description || 'Payment failed. Please try again.'));
       checkout.open();
     } catch (error) { toast(error.message || 'Unable to start checkout.'); }

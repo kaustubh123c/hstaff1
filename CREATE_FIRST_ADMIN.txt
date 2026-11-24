@@ -1,0 +1,27 @@
+CREATE YOUR FIRST H-STAFF ADMIN ACCOUNT
+
+This project uses PostgreSQL/Supabase. The Admin creation script has been
+corrected to use the PostgreSQL database and the existing
+admin-provision-postgres.js helper.
+
+1. Make sure server/.env exists locally and contains your Supabase
+   Transaction Pooler connection string:
+     DATABASE_URL=YOUR_SUPABASE_CONNECTION_STRING
+
+2. Open a terminal in the project root and run:
+     cd server
+     npm install
+     npm run create-admin
+
+3. Enter the Admin name, email, and a new password when prompted.
+   Password must be 12-100 characters. Password input is hidden.
+
+4. Sign in on the website using the exact email and password you entered.
+
+IMPORTANT:
+- This command inserts a user with role 'admin' into the PostgreSQL users table.
+- It refuses to create an account if the email is already registered.
+- It does not reset or reveal existing passwords.
+- Do not commit server/.env or put DATABASE_URL/JWT_SECRET/QR_SECRET in GitHub.
+- Run this command from a trusted local terminal, not as a public website route.
+- Keep NODE_ENV=production and DEV_ADMIN_REGISTRATION_ENABLED=false on Render.

@@ -125,7 +125,7 @@ Before production, configure HTTPS, secrets, Twilio OTP delivery, Razorpay payme
 
 ## Marketplace workflow update
 
-The current implementation includes mobile OTP sign-in/registration, Twilio SMS delivery, expiring job-start OTPs with a five-attempt cap and one-time consumption, worker completion submission, User confirmation, server-calculated hourly job totals, feedback/rating storage, and authenticated GPS update/read routes for active assignments. Confirmed on-demand jobs can use Razorpay order and signature verification endpoints under `/api/payments/jobs/:id/*`. Admins can record an actual offline timesheet payment using a transfer reference.
+The current implementation includes mobile OTP sign-in/registration (including selecting among multiple Worker/User profiles linked to the same verified phone), Twilio SMS delivery, expiring job-start OTPs with a five-attempt cap and one-time consumption, worker completion submission, User confirmation, server-calculated hourly job totals, feedback/rating storage, and authenticated GPS update/read routes for active assignments, including reported GPS accuracy and update timestamps. Confirmed on-demand jobs can use Razorpay order and signature verification endpoints under `/api/payments/jobs/:id/*`. Admins can record an actual offline timesheet payment using a transfer reference.
 
 Configure Twilio in `server/.env` using `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and either a `TWILIO_FROM_NUMBER` or `TWILIO_MESSAGING_SERVICE_SID`. Configure Razorpay with `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, and `RAZORPAY_WEBHOOK_SECRET`, then register `/api/payments/razorpay-webhook` in the Razorpay dashboard. No provider credentials are included, so real SMS sends and gateway charges have not been verified in this environment. Development OTP values are returned only when `NODE_ENV=development` or `test` and the development OTP flag is enabled; production never returns them.
 
@@ -139,3 +139,7 @@ Tracking uses authenticated GPS posts and client polling; it does not use a WebS
 - User-created on-demand tasks generate `nearby_task` notification events for available, verified workers inside the task radius. Event payloads include job ID, service, location, distance, date/time and hourly rate.
 - The notification event is currently stored in the `notifications` table. This is a dispatch queue/event record, **not a delivered mobile push notification**.
 - To achieve the Uber-style experience in production, configure Firebase Cloud Messaging (or another push provider), register worker device tokens, send the queued event to those tokens, and provide secure accept/reject/deep-link actions. SMS fallback can be added using configured Twilio credentials.
+
+## Combined project note
+
+This folder merges two parallel tracks: the React frontend + Node API (this project) and the FastAPI backend from "final h4", now in `backend-fastapi/`. Ported into the Node server: WAF filter (`server/src/waf.js`, mounted on `/api`) and SMTP KYC status e-mails (`server/src/services/email.js`, configure `SMTP_*` in `server/.env`).

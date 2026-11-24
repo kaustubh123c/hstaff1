@@ -40,6 +40,7 @@ export function KycWorker({ user, toast, language = 'en' }) {
   const [type, setType] = useState('Identity document'); const file = useRef();
   const upload = e => {
     e.preventDefault(); const f = file.current.files[0]; if (!f) return toast('Choose a file first', 'error');
+    if (f.size > 5 * 1024 * 1024) return toast('The selected file is larger than 5 MB.', 'error');
     const form = new FormData(); form.append('doc_type', type); form.append('file', f);
     run(() => api('/kyc', { method: 'POST', form }), 'Document uploaded for review.', () => { file.current.value = ''; state.reload(); });
   };
@@ -63,21 +64,179 @@ export function KycWorker({ user, toast, language = 'en' }) {
 export function KycAdmin({ user, toast }) {
   const state = useLoad(() => api('/kyc'), [user.id]);
   const [run, busy] = useAction(toast);
-  const [rej, setRej] = useState(null); const [note, setNote] = useState('');
-  const approve = d => run(() => api(`/kyc/${d.id}/review`, { method: 'POST', body: { decision: 'approve' } }), `${d.worker_name} approved.`, state.reload);
-  const reject = e => { e.preventDefault(); run(() => api(`/kyc/${rej.id}/review`, { method: 'POST', body: { decision: 'reject', note } }), 'Document rejected.', () => { setRej(null); setNote(''); state.reload(); }); };
-  return <>
-    <PageIntro eyebrow="OPERATIONS" title="KYC verification" desc="Review submissions. Every file view is recorded in the audit log." />
-    <Panel><Async state={state}>{({ documents }) => !documents.length ? <Empty icon="doc" title="No submissions" /> :
-      <div className="table-wrap"><table><thead><tr><th>Worker</th><th>Document</th><th>Submitted</th><th>Status</th><th>Review</th></tr></thead><tbody>
-        {documents.map(d => <tr key={d.id}><td><b>{d.worker_name}</b></td><td>{d.doc_type}<span className="cell-sub">{d.original_name}</span></td><td>{fmtDate(d.uploaded_at)}</td><td><Pill>{d.status}</Pill>{d.review_note && <span className="cell-sub">{d.review_note}</span>}</td>
-          <td><div className="action-pair"><button className="btn secondary mini" onClick={() => download(`/kyc/${d.id}/file`, d.original_name).catch(e => toast(e.message, 'error'))}>View file</button>
-            {d.status !== 'Verified' && <button className="btn primary mini" disabled={busy} onClick={() => approve(d)}>Approve</button>}
-            {d.status !== 'Rejected' && <button className="btn secondary mini" onClick={() => setRej(d)}>Reject</button>}</div></td></tr>)}</tbody></table></div>}</Async></Panel>
-    {rej && <Modal title={`Reject ${rej.worker_name}'s document`} onClose={() => setRej(null)}><form className="stack-form" onSubmit={reject}>
-      <label className="field">Reason <span className="hint">shown to the worker</span><textarea required rows="3" value={note} onChange={e => setNote(e.target.value)} maxLength={300} placeholder="e.g. Image is blurry — please upload a clearer copy" /></label>
-      <div className="modal-actions"><button type="button" className="btn secondary" onClick={() => setRej(null)}>Cancel</button><button className="btn primary" disabled={busy}>Reject</button></div></form></Modal>}
-  </>;
+  const [rej, setRej] = useState(null);
+  const [note, setNote] = useState('');
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All');
+
+  const approve = d => run(
+    () => api(`/kyc/${d.id}/review`, { method: 'POST', body: { decision: 'approve' } }),
+    `${d.worker_name} approved.`,
+    state.reload
+  );
+
+  const reject = e => {
+    e.preventDefault();
+    if (!rej) return;
+    run(
+      () => api(`/kyc/${rej.id}/review`, { method: 'POST', body: { decision: 'reject', note } }),
+      'Document rejected.',
+      () => {
+        setRej(null);
+        setNote('');
+        state.reload();
+      }
+    );
+  };
+
+  return (
+    <>
+      <PageIntro
+        eyebrow="OPERATIONS"
+        title="KYC verification"
+        desc="Review submissions. Every file view is recorded in the audit log."
+      />
+      <Panel>
+        <Async state={state}>
+          {({ documents }) => (
+            !documents.length ? (
+              <Empty icon="doc" title="No submissions" />
+            ) : (
+              <>
+                <div className="filters">
+                  <label className="admin-search">
+                    <Icon name="search" size={16} />
+                    <input
+                      placeholder="Search worker or document"
+                      value={search}
+                      onChange={e => setSearch(e.target.value)}
+                    />
+                  </label>
+                  <select
+                    value={statusFilter}
+                    onChange={e => setStatusFilter(e.target.value)}
+                  >
+                    <option>All</option>
+                    <option>Pending</option>
+                    <option>Verified</option>
+                    <option>Rejected</option>
+                  </select>
+                  <span className="muted">
+                    {documents.filter(d =>
+                      (statusFilter === 'All' || d.status === statusFilter) &&
+                      `${d.worker_name} ${d.doc_type} ${d.original_name}`
+                        .toLowerCase()
+                        .includes(search.toLowerCase())
+                    ).length} shown
+                  </span>
+                </div>
+
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Worker</th>
+                        <th>Document</th>
+                        <th>Submitted</th>
+                        <th>Status</th>
+                        <th>Review</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {documents
+                        .filter(d =>
+                          (statusFilter === 'All' || d.status === statusFilter) &&
+                          `${d.worker_name} ${d.doc_type} ${d.original_name}`
+                            .toLowerCase()
+                            .includes(search.toLowerCase())
+                        )
+                        .map(d => (
+                          <tr key={d.id}>
+                            <td><b>{d.worker_name}</b></td>
+                            <td>
+                              {d.doc_type}
+                              <span className="cell-sub">{d.original_name}</span>
+                            </td>
+                            <td>{fmtDate(d.uploaded_at)}</td>
+                            <td>
+                              <Pill>{d.status}</Pill>
+                              {d.review_note && (
+                                <span className="cell-sub">{d.review_note}</span>
+                              )}
+                            </td>
+                            <td>
+                              <div className="action-pair">
+                                <button
+                                  className="btn secondary mini"
+                                  onClick={() =>
+                                    download(`/kyc/${d.id}/file`, d.original_name)
+                                      .catch(e => toast(e.message, 'error'))
+                                  }
+                                >
+                                  View file
+                                </button>
+                                {d.status !== 'Verified' && (
+                                  <button
+                                    className="btn primary mini"
+                                    disabled={busy}
+                                    onClick={() => approve(d)}
+                                  >
+                                    Approve
+                                  </button>
+                                )}
+                                {d.status !== 'Rejected' && (
+                                  <button
+                                    className="btn secondary mini"
+                                    onClick={() => setRej(d)}
+                                  >
+                                    Reject
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )
+          )}
+        </Async>
+      </Panel>
+
+      {rej && (
+        <Modal
+          title={`Reject ${rej.worker_name}'s document`}
+          onClose={() => setRej(null)}
+        >
+          <form className="stack-form" onSubmit={reject}>
+            <label className="field">
+              Reason <span className="hint">shown to the worker</span>
+              <textarea
+                required
+                rows="3"
+                value={note}
+                onChange={e => setNote(e.target.value)}
+                maxLength={300}
+                placeholder="e.g. Image is blurry — please upload a clearer copy"
+              />
+            </label>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => setRej(null)}
+              >
+                Cancel
+              </button>
+              <button className="btn primary" disabled={busy}>Reject</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </>
+  );
 }
 
 // ---------------- Profile ----------------

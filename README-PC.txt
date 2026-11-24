@@ -16,11 +16,11 @@ FIRST-TIME SETUP
 6. Keep the terminal window open while using the application.
 
 OTP ON THIS PC
-- Local development OTP is enabled in server\.env.
+- Copy server\.env.example to server\.env for local development; local development OTP is enabled by default in that template.
 - No SMS is sent in local mode. The development OTP is shown by the app after requesting it.
 - OTP expires after 5 minutes by default.
 - This mode is for local PC testing only; do not expose this development server publicly.
-- To send real SMS instead, set DEV_OTP_ENABLED=false and configure valid Twilio Account SID,
+- To send real SMS instead, set DEV_OTP_ENABLED=false, then configure valid Twilio Account SID,
   Auth Token, and either a From Number or Messaging Service SID in server\.env, then restart.
 
 ADMIN / DEMO DATA
@@ -44,7 +44,8 @@ FEATURES / EXTERNAL SERVICES
 - Real SMS requires Twilio credentials. Local OTP mode does not send text messages.
 - Google sign-in is optional and requires matching Google OAuth client IDs in root .env
   and server\.env. Email/password and local OTP do not require Google configuration.
-- Maps/geolocation uses the browser's location permission and available device location services.
+- Maps/geolocation uses the browser's location permission and available device location services. GPS APIs store coordinates, accuracy and update time for authenticated active assignments.
+- A phone number can be linked to multiple Worker/User accounts; after OTP verification, choose which account to open.
 
 STOPPING
 - Press Ctrl+C in the START-HSTAFF.bat terminal window and confirm if prompted.

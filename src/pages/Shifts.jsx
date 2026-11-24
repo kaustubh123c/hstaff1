@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { money, fmtDate, shiftTime } from '../format.js';
 import { Icon, PageIntro, Panel, Pill, Empty, Async, useLoad, Modal, useAction } from '../components/ui.jsx';
@@ -28,7 +28,7 @@ export function ShiftCard({ shift: s, action, language = 'en' }) {
   </div>;
 }
 
-export default function ShiftsPage({ user, page, toast, go, language = 'en' }) {
+export default function ShiftsPage({ user, page, toast, go, meta, language = 'en' }) {
   const t = key => tr(language, key);
   const mine = page === 'My Shifts' && user.role === 'worker';
   const [q, setQ] = useState(''); const [status, setStatus] = useState('All');
@@ -58,11 +58,11 @@ export default function ShiftsPage({ user, page, toast, go, language = 'en' }) {
             : <button className="btn primary mini" disabled={busy} onClick={() => apply(s)}>{t('Apply')}</button>} />)}</div>
         : <ShiftTable shifts={shifts} language={language} showBusiness={user.role === 'admin'} onManage={setManage} />}</Async>
     </Panel>
-    {manage && <ManageModal shift={manage} user={user} toast={toast} language={language} onClose={() => setManage(null)} onChanged={() => { state.reload(); }} go={go} />}
+    {manage && <ManageModal shift={manage} user={user} toast={toast} meta={meta} language={language} onClose={() => setManage(null)} onChanged={() => { state.reload(); }} go={go} />}
   </>;
 }
 
-function ManageModal({ shift, user, toast, language = 'en', onClose, onChanged, go }) {
+function ManageModal({ shift, user, toast, meta, language = 'en', onClose, onChanged, go }) {
   const t = key => tr(language, key);
   const [tab, setTab] = useState('applicants');
   const [s, setS] = useState(shift);
@@ -88,15 +88,116 @@ function ManageModal({ shift, user, toast, language = 'en', onClose, onChanged, 
       <p className="muted">Display this code at the work site. Accepted workers scan it from Attendance — the server verifies the signature, 12-hour post-shift expiry, assignment, shift time and live GPS geofence.</p>
       <div className="token">{d.token}</div>
       <div className="modal-actions" style={{ justifyContent: 'center' }}><button className="btn secondary mini" onClick={() => navigator.clipboard?.writeText(d.token).then(() => toast(t('Code copied')))}>{t('Copy code')}</button></div></div>}</Async>}
-    {tab === 'details' && <dl className="kv">
-      <dt>Description</dt><dd>{s.description || '—'}</dd><dt>Skills</dt><dd>{s.skills.join(', ') || '—'}</dd><dt>Rate</dt><dd>{money(s.rate)} / hour</dd>
-      <dt>Geofence</dt><dd>{s.lat != null ? `${s.radius_m} m around ${s.lat.toFixed(4)}, ${s.lng.toFixed(4)}` : 'No location pin set (GPS not enforced)'}</dd></dl>}
+    {tab === 'details' && <>
+      <dl className="kv">
+        <dt>Description</dt><dd>{s.description || '—'}</dd><dt>Skills</dt><dd>{s.skills.join(', ') || '—'}</dd><dt>Rate</dt><dd>{money(s.rate)} / hour</dd>
+        <dt>Geofence</dt><dd>{s.lat != null ? `${s.radius_m} m around ${s.lat.toFixed(4)}, ${s.lng.toFixed(4)}` : 'No location pin set (GPS not enforced)'}</dd>
+      </dl>
+      {user.role === 'business' && s.status !== 'Open' && s.status !== 'Cancelled' &&
+        <CustomerShiftVerification shift={s} meta={meta} toast={toast} onChanged={refresh} />}
+    </>}
     <div className="modal-actions">
       {!closed && <button className="btn danger" disabled={busy} onClick={() => act('cancel', 'Shift cancelled.')}>{t('Cancel shift')}</button>}
-      {['Filled', 'Ongoing'].includes(s.status) && <button className="btn primary" disabled={busy} onClick={() => act('complete', 'Shift completed. Timesheets were generated.')}>{t('Mark completed')}</button>}
+      {user.role === 'admin' && ['Filled', 'Ongoing'].includes(s.status) && <button className="btn primary" disabled={busy} onClick={() => act('complete', 'Shift completed by admin.')}>{t('Admin override: complete shift')}</button>}
       <button className="btn secondary" onClick={onClose}>{t('Close')}</button>
     </div>
   </Modal>;
+}
+
+
+function CustomerShiftVerification({ shift, meta, toast, onChanged }) {
+  const [workflow, setWorkflow] = useState(null);
+  const [startCode, setStartCode] = useState('');
+  const [finishCode, setFinishCode] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    try {
+      const result = await api(`/shifts/${shift.id}/workflow`);
+      setWorkflow(result);
+    } catch (error) {
+      toast(error.message || 'Could not load work verification.', 'error');
+    }
+  };
+  useEffect(() => { load(); }, [shift.id, shift.status]);
+
+  const verify = async stage => {
+    const code = stage === 'start' ? startCode : finishCode;
+    if (!/^\d{6}$/.test(code)) {
+      toast('Enter the 6-digit code supplied by the worker.', 'error');
+      return;
+    }
+    setBusy(true);
+    try {
+      await api(`/shifts/${shift.id}/verify-${stage}`, {
+        method: 'POST', body: { otp: code }
+      });
+      if (stage === 'start') setStartCode('');
+      else setFinishCode('');
+      toast(stage === 'start' ? 'Start code verified. Work has started.' : 'Finish code verified. Work completed.');
+      await load();
+      await onChanged?.();
+    } catch (error) {
+      toast(error.message || 'Code verification failed.', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pay = async () => {
+    // Presentation-only checkout: no gateway call, no money is collected,
+    // and the backend payment status remains unpaid.
+    setBusy(true);
+    try {
+      const returnTo = `${window.location.origin}${window.location.pathname}#My%20Shifts`;
+      const checkoutUrl = `/demo-razorpay.html?shift=${encodeURIComponent(shift.id)}&return=${encodeURIComponent(returnTo)}`;
+      window.location.assign(checkoutUrl);
+    } catch (error) {
+      toast(error.message || 'Could not open demo checkout.', 'error');
+      setBusy(false);
+    }
+  };
+
+  const inputStyle = { width: '100%', padding: 12, margin: '10px 0', borderRadius: 8 };
+  if (!workflow) return <section className="info-box" style={{ marginTop: 18 }}>Loading worker verification…</section>;
+
+  return <section className="info-box" style={{ marginTop: 18 }}>
+    <h3>Worker verification & payment</h3>
+    <p>Assigned worker: <b>{workflow.worker_name || 'No worker assigned yet'}</b></p>
+    <p>Work status: <b>{workflow.status}</b></p>
+
+    {!workflow.start_verified && workflow.worker_id && ['Filled', 'Ongoing'].includes(workflow.status) && <>
+      <h4>1. Start work</h4>
+      <p>Ask the worker for the Start Code when they arrive, then enter it here.</p>
+      <input style={inputStyle} inputMode="numeric" maxLength={6} placeholder="6-digit Start Code"
+        value={startCode} onChange={e => setStartCode(e.target.value.replace(/\D/g, ''))} />
+      <button className="btn primary" disabled={busy || startCode.length !== 6} onClick={() => verify('start')}>
+        Verify Start Code & Start Work
+      </button>
+    </>}
+
+    {workflow.start_verified && workflow.status === 'Ongoing' && workflow.payment_status !== 'paid' && <>
+      <h4>2. Customer payment</h4>
+      <h2>₹{workflow.amount ?? '—'}</h2>
+      <p>Pay the agreed job amount before entering the worker's Finish Code.</p>
+      <button className="btn primary" disabled={busy || !workflow.amount} onClick={pay}>
+        Pay ₹{workflow.amount ?? ''}
+      </button>
+    </>}
+
+    {workflow.start_verified && workflow.status === 'Ongoing' && workflow.payment_status === 'paid' && <>
+      <h4>3. Finish work</h4>
+      <p>After payment, ask the worker for the separate Finish Code.</p>
+      <input style={inputStyle} inputMode="numeric" maxLength={6} placeholder="6-digit Finish Code"
+        value={finishCode} onChange={e => setFinishCode(e.target.value.replace(/\D/g, ''))} />
+      <button className="btn primary" disabled={busy || finishCode.length !== 6} onClick={() => verify('finish')}>
+        Verify Finish Code & Complete Work
+      </button>
+    </>}
+
+    {workflow.status === 'Completed' && <p><b>✓ Work completed.</b> Payment and Finish Code verification are recorded.</p>}
+    <button className="btn secondary" style={{ marginTop: 12 }} disabled={busy} onClick={load}>Refresh status</button>
+  </section>;
 }
 
 // ---- Create shift ----------------------------------------------------------

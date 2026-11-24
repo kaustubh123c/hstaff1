@@ -4,15 +4,17 @@
 This code includes server-side Razorpay order creation, Checkout signature verification, webhook signature verification, deduplicated webhook event storage, separate client-collection and worker-payout statuses, and an admin payout queue. It does **not** send a worker bank transfer automatically. Live payouts require Razorpay approval for an applicable marketplace/Route or RazorpayX payout product, worker beneficiary onboarding, and credentials. Do not advertise automatic payouts until that provider integration is separately enabled and tested.
 
 ## Local setup
-1. Create/activate your Razorpay account and use Test Mode keys first.
+1. Activate your Razorpay account and enable Live Mode. This H-Staff build intentionally disables demo and Test Mode payments.
 2. Copy `server/.env.example` to `server/.env`.
 3. Add server-only values:
-   - `RAZORPAY_KEY_ID=rzp_test_...`
+   - `RAZORPAY_KEY_ID=rzp_live_...` (Live Mode Key ID only)
    - `RAZORPAY_KEY_SECRET=...`
    - `RAZORPAY_WEBHOOK_SECRET=...` (choose the same secret in Razorpay's webhook configuration)
    - `PLATFORM_FEE_PERCENT=10` (set your actual disclosed fee; default shown is 10%)
 4. Configure a Razorpay webhook URL: `https://YOUR_API_HOST/api/payments/razorpay-webhook`. Subscribe to `payment.captured` and `payment.failed`.
 5. Install dependencies and run the app as usual. No Razorpay secret belongs in a `VITE_` variable or frontend code.
+
+Set `DEMO_MODE=false`. The backend rejects payment creation unless the configured Key ID starts with `rzp_live_`. Never commit live credentials to Git or put them in frontend/VITE variables.
 
 ## Flow
 - A business can start Checkout for an approved timesheet.
@@ -26,3 +28,7 @@ This code includes server-side Razorpay order creation, Checkout signature verif
 - Use HTTPS and a persistent production database/storage. SQLite on ephemeral hosting is not production-safe.
 - Set `CORS_ORIGIN` to the exact deployed frontend URL, keep secrets in the host's secret manager, and configure webhook retries/monitoring.
 - Implement and test the provider's actual linked-account/payout API after the account is approved; don't mark payouts paid until the provider confirms success.
+
+
+## Presentation-only checkout demo
+The Pay Now button in this presentation build opens `public/demo-razorpay.html`, displays a clearly labelled simulated checkout screen, and automatically returns to My Shifts. It does not call Razorpay, collect money, create a payment record, or mark a shift as paid. The payment remains unpaid and Finish Code remains locked until a genuine payment integration is configured.

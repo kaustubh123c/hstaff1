@@ -1,0 +1,27 @@
+H-STAFF DATABASE MERGE NOTES
+
+This package keeps the corrected homepage/frontend from HStaff_Corrected_Homepage
+and replaces its old SQLite backend with the PostgreSQL/Supabase backend from
+HStaff_Ready_For_GitHub.
+
+Backend files:
+- server/src/db-postgres.js
+- server/src/routes/*-postgres.js
+- server/src/auth-postgres.js
+- server/src/services-postgres.js
+- server/src/util-postgres.js
+- server/src/index.js (wired to PostgreSQL routes)
+- server/package.json and server/package-lock.json (includes pg)
+
+Before deployment:
+1. Set DATABASE_URL in the Render environment to the Supabase Transaction Pooler URI.
+2. Set JWT_SECRET and QR_SECRET to newly generated, separate random secrets.
+3. Set CORS_ORIGIN to the exact deployed frontend origin, including https://.
+4. Set NODE_ENV=production and DEV_OTP_ENABLED=false for a public deployment.
+5. Set the frontend VITE_API_URL to https://YOUR-RENDER-SERVICE.onrender.com/api.
+6. Install backend dependencies with: npm install --prefix server
+7. Start the backend with: npm start --prefix server
+
+Do not commit .env files, database backups, uploaded user documents, or secret values.
+This package contains code and example configuration only; it does not contain your
+live Supabase database credentials or copy live database records.

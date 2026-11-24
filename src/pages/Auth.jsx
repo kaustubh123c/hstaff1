@@ -11,7 +11,7 @@ const WORK = {
   mr: { 'I want work': 'मला काम हवे', 'I need workers': 'मला कामगार हवेत', 'Register as': 'तुम्ही कोण आहात?', 'Skip for now': 'आता वगळा',
     'Register to get work near you.': 'जवळचे काम मिळवण्यासाठी नोंदणी करा.', 'Your skills': 'तुमचे कौशल्य', 'Your area': 'तुमचा परिसर' },
 };
-export default function AuthPage({ onAuth, demo, language = 'en', setLanguage = () => {}, onBackToLanding = () => {} }) {
+export default function AuthPage({ onAuth, demo, language = 'en', setLanguage = () => {} }) {
   const t = key => WORK[language]?.[key] ?? tr(language, key);
   const [mode, setMode] = useState('login');
   const [adminSignIn, setAdminSignIn] = useState(false);
@@ -25,6 +25,8 @@ export default function AuthPage({ onAuth, demo, language = 'en', setLanguage = 
   const [otpSent, setOtpSent] = useState(false);
   const [otp, setOtp] = useState('');
   const [developmentOtp, setDevelopmentOtp] = useState('');
+  const [phoneAccounts, setPhoneAccounts] = useState([]);
+  const [selectedPhoneAccount, setSelectedPhoneAccount] = useState('');
   const googleButtonRef = useRef(null);
   const [googleError, setGoogleError] = useState('');
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -92,7 +94,7 @@ export default function AuthPage({ onAuth, demo, language = 'en', setLanguage = 
     try {
       const result = await api('/auth/otp/request', { method: 'POST', body: { phone: `+91${f.phone.replace(/\D/g, '')}`,
         ...(mode === 'register' ? { role, ...(f.name ? { name: f.name } : {}), email: f.email || undefined, skills: f.skills || undefined, location: f.location || undefined } : {}) } });
-      setOtpSent(true); setOtp('');
+      setOtpSent(true); setOtp(''); setPhoneAccounts([]); setSelectedPhoneAccount('');
       if (result.delivery === 'development' && result.development_otp) setDevelopmentOtp(result.development_otp);
     } catch (error) { setErr(t(error.message)); } finally { setBusy(false); }
   };
@@ -100,7 +102,9 @@ export default function AuthPage({ onAuth, demo, language = 'en', setLanguage = 
     e.preventDefault(); setErr(''); setBusy(true);
     try {
       const result = await api('/auth/otp/verify', { method: 'POST', body: { phone: `+91${f.phone.replace(/\D/g, '')}`, otp,
+        ...(selectedPhoneAccount ? { account_id: Number(selectedPhoneAccount) } : {}),
         ...(mode === 'register' ? { role, ...(f.name ? { name: f.name } : {}), email: f.email || undefined, skills: f.skills || undefined, location: f.location || undefined } : {}) } });
+      if (result.requires_account_selection) { setPhoneAccounts(result.accounts || []); setSelectedPhoneAccount(''); setErr('This phone number has multiple accounts. Select which account you want to open.'); return; }
       if (result.created) { auth.set(result.token); setProfileTicket(result.token); }
       else completeAuth(result);
     } catch (error) { setErr(t(error.message)); } finally { setBusy(false); }
@@ -163,8 +167,7 @@ export default function AuthPage({ onAuth, demo, language = 'en', setLanguage = 
       <div className="auth-card-top"><div className="auth-brand-mobile"><span className="brand-mark">H</span><b>H-Staff</b></div>
         <label className="field auth-language">{t('Language')}<select aria-label={t('Language')} value={language} onChange={e => { setLanguage(e.target.value); localStorage.setItem('hstaff_language', e.target.value); }}><option value="en">English</option><option value="hi">हिन्दी</option><option value="mr">मराठी</option></select></label>
       </div>
-      {!adminSignIn && !adminRegister && mode === 'login' && <button type="button" className="text-btn auth-resend" onClick={onBackToLanding}>← Back to Home</button>}
-            {!adminSignIn && <div className="auth-tabs" role="tablist"><button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => { setMode('login'); setAdminSignIn(false); setPhoneMode(false); setOtpSent(false); setErr(''); setGoogleError(''); }}>{t('Sign In')}</button><button type="button" className={mode === 'register' ? 'active' : ''} onClick={() => { setMode('register'); setAdminSignIn(false); setPhoneMode(true); setOtpSent(false); setErr(''); setGoogleError(''); }}>{t('Register')}</button></div>}
+      {!adminSignIn && <div className="auth-tabs" role="tablist"><button type="button" className={mode === 'login' ? 'active' : ''} onClick={() => { setMode('login'); setAdminSignIn(false); setPhoneMode(false); setOtpSent(false); setErr(''); setGoogleError(''); }}>{t('Sign In')}</button><button type="button" className={mode === 'register' ? 'active' : ''} onClick={() => { setMode('register'); setAdminSignIn(false); setPhoneMode(true); setOtpSent(false); setErr(''); setGoogleError(''); }}>{t('Register')}</button></div>}
       <h2>{t(adminRegister ? 'Create Admin account' : adminSignIn ? 'Admin sign in' : mode === 'login' ? 'Sign in to your account' : 'Create your account')}</h2>
       <p>{t(adminRegister ? 'Create a local administrator account for this demo.' : adminSignIn ? 'Sign in with your administrator email and password.' : mode === 'login' ? (phoneMode ? 'Sign in securely with your mobile number.' : 'Sign in to continue to your account.') : (role === 'worker' ? 'Register to get work near you.' : 'Create an account to request nearby help.'))}</p>
       {mode === 'register' && <div className="auth-step-count">{t('Registration step')} {otpSent ? '2' : '1'} / {role === 'worker' ? 4 : 3}</div>}
@@ -176,9 +179,11 @@ export default function AuthPage({ onAuth, demo, language = 'en', setLanguage = 
         <label className="field">{t('Mobile number')}<span className="phone-input"><span aria-label="India country code">🇮🇳 +91</span><input required type="tel" inputMode="numeric" pattern="[6-9][0-9]{9}" maxLength={10} placeholder="9876543210" value={f.phone} onChange={e => setF(prev => ({ ...prev, phone: e.target.value.replace(/\D/g, '').slice(0, 10) }))} autoComplete="tel-national" /></span></label>
         {otpSent && <><p className="auth-otp-instructions">{t(developmentOtp ? 'A local development code was generated; no SMS was sent.' : 'Enter the 6-digit code sent to your mobile. It expires shortly.')} <button type="button" className="text-btn" onClick={() => { setOtpSent(false); setDevelopmentOtp(''); setOtp(''); setErr(''); }}>{t('Change number')}</button></p>
           {developmentOtp && <div className="development-otp-note" role="status"><span>{t('Development OTP (local only)')}</span><strong>{developmentOtp}</strong><small>{t('Enter this code above. It was generated locally; no SMS was sent.')}</small></div>}
-          <label className="field">{t('Verification code')}<input required inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code" value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g, ''))} /></label></>}
+          <label className="field">{t('Verification code')}<input required inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code" value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g, ''))} /></label>
+          {phoneAccounts.length > 0 && <label className="field">Choose account<select required value={selectedPhoneAccount} onChange={e => setSelectedPhoneAccount(e.target.value)}><option value="">Select account</option>{phoneAccounts.map(a => <option key={a.id} value={a.id}>{a.name} · {a.role === 'worker' ? 'Worker' : 'User'} · {a.email}</option>)}</select></label>}
+        </>}
         {err && <div className="form-error" role="alert">{t(err)}</div>}
-        <button className="btn primary auth-primary" disabled={busy}>{busy ? t('Please wait…') : otpSent ? t('Verify and continue') : t('Send verification code')}</button>
+        <button className="btn primary auth-primary" disabled={busy || (phoneAccounts.length > 0 && !selectedPhoneAccount)}>{busy ? t('Please wait…') : otpSent ? (phoneAccounts.length ? 'Continue with selected account' : t('Verify and continue')) : t('Send verification code')}</button>
         {otpSent && <button className="text-btn auth-resend" type="button" disabled={busy} onClick={sendPhoneCode}>{t('Resend code')}</button>}
       </form> : <form className="stack-form" onSubmit={submit}>
         {adminRegister && <label className="field">{t('Full name')}<input required minLength={2} maxLength={80} value={f.name} onChange={set('name')} autoComplete="name" /></label>}

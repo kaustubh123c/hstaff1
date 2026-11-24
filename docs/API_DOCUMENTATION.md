@@ -7,7 +7,7 @@ Base path: `/api`. Protected routes use `Authorization: Bearer <JWT>`. JSON erro
 | `GET /health`, `GET /meta` | Public | Health and feature metadata |
 | `POST /auth/register`, `POST /auth/login` | Public + rate limited | Email/password Worker/User auth; User is persisted as the existing internal `business` role; admin role is rejected |
 | `POST /auth/google` | Public + rate limited | Verifies a Google ID token against configured Google signing keys and audience. `intent:user` may create/retrieve only a normal User (`business`) account; `intent:admin` authenticates only an already provisioned Admin. No role/email claims from the client are trusted. |
-| `POST /auth/otp/request`, `POST /auth/otp/verify` | Public + rate limited | Phone OTP sign-in or Worker/User registration; one-minute resend limit, configured expiry, five attempts; Twilio in configured environments, development OTP only in `development`/`test`. A 503 indicates missing provider configuration and issues no code. |
+| `POST /auth/otp/request`, `POST /auth/otp/verify` | Public + rate limited | Phone OTP sign-in or Worker/User registration; one-minute resend limit, configured expiry, five attempts; Twilio in configured environments, development OTP only in `development`/`test`. Multiple accounts may share a phone; verification returns `requires_account_selection` and masked account details, then accepts `account_id` with the same still-valid OTP. A 503 indicates missing provider configuration and issues no code. |
 | `GET/PUT /auth/me`, `POST /auth/change-password` | User | Profile/password; profile updates include email and support post-OTP onboarding |
 
 Admin accounts are provisioned with `npm run create-admin --prefix server` for hosted environments. For local demos only, `POST /api/auth/admin/register` is enabled when the backend has `NODE_ENV=development` and `DEV_ADMIN_REGISTRATION_ENABLED=true`, and the request originates from localhost. It is disabled in production; Worker/User public registration cannot assign the Admin role.
@@ -19,15 +19,14 @@ Admin accounts are provisioned with `npm run create-admin --prefix server` for h
 | `/disputes` | User/admin | Raise and administer disputes |
 | `/admin/*` | Admin | User status, settings, reports, audit |
 | `POST /jobs` | Business | Create on-demand request; required title/location/lat/lng/date/times/rate |
-| `POST /workers/location` | Worker | Store coordinates and optional availability |
+| `POST /workers/location` | Worker | Store coordinates, GPS accuracy, update timestamp and optional availability |
 | `GET /jobs/nearby?lat=&lng=&radius=` | Worker | Radius-filtered open on-demand work |
 | `GET /workers/nearby?lat=&lng=&radius=` | Business/admin | Available workers by distance |
 | `POST /jobs/:id/request` | Worker | Accept job if active, available, verified and open; transaction prevents ordinary duplicate wins |
 | `GET /jobs/mine` | User | List own on-demand jobs and payment/worker/completion state |
-| `GET /jobs/:id/otp/start`, `POST /jobs/:id/otp/start/resend` | Owning business | Deliver or renew expiring arrival code (development returns it to the business only) |
-| `POST /jobs/:id/verify-start` | Assigned worker | Submit six-digit, ten-minute, five-attempt, one-use code |
-| `POST /jobs/:id/location`, `GET /jobs/:id/location` | Assigned worker / owning business / admin | GPS updates and active job location read; tracking stops after completion |
-| `POST /jobs/:id/complete`, `POST /jobs/:id/confirm-completion` | Assigned worker / owning business | Submit and confirm completion; server calculates duration and creates job payment |
+| `GET /jobs/:id/codes`, `POST /jobs/:id/codes/regenerate` | Assigned worker | Worker sees the start and finish codes (created on accept) and can regenerate them; no SMS needed |
+| `POST /jobs/:id/verify-start`, `POST /jobs/:id/verify-finish` | Owning business | Customer types the worker's six-digit start code to begin the shift and finish code to end it (five attempts each; finishing creates the job payment) |
+| `POST /jobs/:id/location`, `GET /jobs/:id/location` | Assigned worker / owning business / admin | GPS updates (including optional accuracy in metres) and active job location read; tracking stops after completion |
 | `POST /jobs/:id/ratings` | Owning business | Submit one 1–5 rating and feedback after confirmed completion |
 | `POST /payments/jobs/:id/create-order`, `.../verify-checkout` | Owning business | Razorpay collect on completed on-demand job; gateway configuration required |
 | `POST /payments/:id/mark-paid` | Admin | Record verified offline payment reference for an approved timesheet |
@@ -37,3 +36,10 @@ Example request: `POST /jobs` with `{ "title":"Moving help", "location":"Pune", 
 Razorpay order example: `POST /payments/:id/create-order`; checkout verification posts Razorpay's `razorpay_order_id`, `razorpay_payment_id`, and `razorpay_signature` to `/payments/:id/verify-checkout`. A configured webhook requires a valid `x-razorpay-signature` and unique event id. Exact schemas are in `server/src/routes/` and should be updated with each API change.
 
 Limitations: tracking uses polling rather than WebSockets; no OTP vendor or Razorpay credentials were supplied, so real provider transactions were not run. The legacy `server/src/routes/ondemand.js` is no longer mounted; active on-demand behavior is in `server/src/routes/marketplace.js`.
+
+
+## On-demand job flow (start code → pay → finish code)
+1. Worker accepts: start and finish codes are created (`GET /jobs/:id/codes`, worker only).
+2. Customer enters the worker's start code (`POST /jobs/:id/verify-start`): job becomes Ongoing and the amount (booked hours × rate) is fixed.
+3. Customer pays through Razorpay Live Checkout (`POST /payments/jobs/:id/create-order` + `verify-checkout`). Demo payment endpoints are not available.
+4. Customer enters the finish code (`POST /jobs/:id/verify-finish`); refused with 409 until paid.

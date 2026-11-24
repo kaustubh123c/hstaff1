@@ -1,17 +1,30 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-echo ==========================================
-echo H-Staff PC Setup
-echo ==========================================
-where node >nul 2>nul || (echo Node.js is not installed. Install Node.js 22.12 or newer from https://nodejs.org/ & pause & exit /b 1)
-node -e "const v=process.versions.node.split('.').map(Number); if(v[0]<22 || (v[0]===22 && v[1]<12)){console.error('Node.js 22.12 or newer is required.');process.exit(1)}" || (pause & exit /b 1)
+echo ======================================
+echo H-STAFF - FIRST TIME PC SETUP
+echo ======================================
+node -v
+if errorlevel 1 (
+  echo Node.js 22 or newer is required. Install it from https://nodejs.org/
+  pause
+  exit /b 1
+)
+if not exist "server\.env" (
+  copy "server\.env.example" "server\.env" >nul
+  echo Created server\.env for local development OTP.
+)
 echo Installing frontend dependencies...
 call npm install
-if errorlevel 1 (echo Frontend dependency installation failed.& pause & exit /b 1)
+if errorlevel 1 goto failed
 echo Installing backend dependencies...
 call npm install --prefix server
-if errorlevel 1 (echo Backend dependency installation failed.& pause & exit /b 1)
+if errorlevel 1 goto failed
 echo.
-echo Setup complete. Run START-HSTAFF.bat to launch the application.
+echo Setup complete. Run START-HSTAFF.bat to launch H-Staff.
 pause
+exit /b 0
+:failed
+echo Setup failed. Check your internet connection and Node.js installation.
+pause
+exit /b 1

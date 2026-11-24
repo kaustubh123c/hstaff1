@@ -174,6 +174,7 @@ function FindWork({ user, toast, t, language, kyc, goOrders, openProfile }) {
   const [instant, setInstant] = useState([]);
   const [shifts, setShifts] = useState([]);
   const [skipped, setSkipped] = useState([]);
+  const [sortMode, setSortMode] = useState('nearby');
   const [sound, setSound] = useState(() => { try { return localStorage.getItem('hstaff_voice') === '1'; } catch { return false; } });
   const pos = useRef(null), lastPost = useRef(0), seen = useRef(new Set());
 
@@ -215,7 +216,7 @@ function FindWork({ user, toast, t, language, kyc, goOrders, openProfile }) {
     refresh();
     const poll = setInterval(() => { if (!document.hidden) refresh(); }, 8000);
     const watch = online ? navigator.geolocation?.watchPosition(p => {
-      pos.current = { lat: p.coords.latitude, lng: p.coords.longitude };
+      pos.current = { lat: p.coords.latitude, lng: p.coords.longitude, accuracy_m: p.coords.accuracy };
       if (Date.now() - lastPost.current > 20000) { lastPost.current = Date.now(); api('/workers/location', { method: 'POST', body: pos.current }).catch(() => {}); }
     }, () => {}, { enableHighAccuracy: true, maximumAge: 10000 }) : null;
     return () => { clearInterval(poll); if (watch != null) navigator.geolocation.clearWatch(watch); };
@@ -229,9 +230,14 @@ function FindWork({ user, toast, t, language, kyc, goOrders, openProfile }) {
       ...shifts.map(s => ({ id: s.id, kind: 'shift', key: `s${s.id}`, title: s.title, company: s.business, location: s.location, lat: s.lat, lng: s.lng,
         date: s.date, start_time: s.start_time, end_time: s.end_time, rate: s.rate, distance_m: here && s.lat != null ? Math.round(dist(here.lat, here.lng, s.lat, s.lng)) : null })),
     ].filter(i => !skipped.includes(i.key));
-    return items.sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'job' ? -1 : 1) || ((a.distance_m ?? 9e9) - (b.distance_m ?? 9e9)) || (a.date + a.start_time).localeCompare(b.date + b.start_time));
+    return items.sort((a, b) => {
+      if (sortMode === 'pay-high') return (b.rate || 0) - (a.rate || 0) || (a.distance_m ?? 9e9) - (b.distance_m ?? 9e9);
+      if (sortMode === 'pay-low') return (a.rate || 0) - (b.rate || 0) || (a.distance_m ?? 9e9) - (b.distance_m ?? 9e9);
+      if (sortMode === 'date') return (a.date + a.start_time).localeCompare(b.date + b.start_time);
+      return (a.kind === b.kind ? 0 : a.kind === 'job' ? -1 : 1) || ((a.distance_m ?? 9e9) - (b.distance_m ?? 9e9)) || (a.date + a.start_time).localeCompare(b.date + b.start_time);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [instant, shifts, skipped, online]);
+  }, [instant, shifts, skipped, online, sortMode]);
   const top = feed[0];
 
   const readJob = j => speak(`${j.title}. ${j.location}. ${niceDate(j.date)}. ${hhmm(j.start_time)}.`, language);
@@ -268,6 +274,7 @@ function FindWork({ user, toast, t, language, kyc, goOrders, openProfile }) {
     </section>
     {locError && <div className="wp-alert"><Icon name="pin" size={20} />{t('Please turn on location in your phone, then try again.')}</div>}
     {!online && shifts.length > 0 && !locError && <p className="wp-note"><Icon name="info" size={16} />{t('Switch on to also get instant jobs near you.')}</p>}
+    <div className="wp-feed-tools"><span>{feed.length} {t('opportunities')}</span><label>{t('Sort by')} <select value={sortMode} onChange={e => setSortMode(e.target.value)}><option value="nearby">{t('Nearest first')}</option><option value="date">{t('Soonest first')}</option><option value="pay-high">{t('Highest pay')}</option><option value="pay-low">{t('Lowest pay')}</option></select></label></div>
 
     {top ? <>
       <SwipeCard key={top.key} item={top} t={t} busy={busy} onTake={() => take(top)} onSkip={() => skip(top)} onSpeak={() => readJob(top)} />
@@ -365,16 +372,24 @@ function Orders({ toast, t, language, kyc, onCount, goFind }) {
 }
 
 function OrderCard({ order: o, today, next, toast, t, language, reload }) {
-  const [code, setCode] = useState('');
+  const [codes, setCodes] = useState(null);
   const [help, setHelp] = useState(false);
   const [run, busy] = useAction(toast);
   const [label, tone] = statusOf(o);
   const done = stepsDone(o);
-  const canVerify = o.kind === 'job' && o.status === 'Filled';
-  const canFinish = o.kind === 'job' && o.status === 'Ongoing' && !o.completion_requested_at;
+  useEffect(() => {
+    if (o.kind !== 'job' || o.status !== 'Ongoing' || !navigator.geolocation) return;
+    const watch = navigator.geolocation.watchPosition(position => {
+      api(`/jobs/${o.id}/location`, { method: 'POST', body: { lat: position.coords.latitude, lng: position.coords.longitude, accuracy_m: position.coords.accuracy } }).catch(() => {});
+    }, () => {}, { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 });
+    return () => navigator.geolocation.clearWatch(watch);
+  }, [o.id, o.kind, o.status]);
+  const showCodes = ['job', 'shift'].includes(o.kind) && !o.applied && ['Filled', 'Ongoing'].includes(o.status);
   const live = !o.applied && ACTIVE.includes(o.status);
-  const verify = () => run(() => api(`/jobs/${o.id}/verify-start`, { method: 'POST', body: { otp: code } }), t('Arrival confirmed.'), () => { buzz(); setCode(''); reload(); });
-  const finish = () => run(() => api(`/jobs/${o.id}/complete`, { method: 'POST' }), t('Work marked finished.'), () => { buzz(); reload(); });
+  const codeBase = o.kind === 'shift' ? `/shifts/${o.id}` : `/jobs/${o.id}`;
+  const loadCodes = useCallback(() => api(`${codeBase}/codes`).then(setCodes).catch(() => {}), [codeBase]);
+  useEffect(() => { if (showCodes) loadCodes(); else setCodes(null); }, [showCodes, o.status, loadCodes]);
+  const renew = () => run(() => api(`${codeBase}/codes/regenerate`, { method: 'POST' }), t('New code created.'), () => { buzz(); loadCodes(); });
   const withdraw = () => run(() => api(`/shifts/${o.id}/apply`, { method: 'DELETE' }), t('Application withdrawn.'), reload);
   const aloud = `${o.title}. ${t('Place')}: ${o.location}. ${t('Date')}: ${o.date}. ${t('Time')}: ${o.start_time} - ${o.end_time}. ${t(label)}.`;
   const report = problem => run(
@@ -396,17 +411,23 @@ function OrderCard({ order: o, today, next, toast, t, language, reload }) {
       <li><Icon name="calendar" size={20} /><div><small>{t('Date')}</small>{niceDate(o.date)}</div></li>
       <li><Icon name="clock" size={20} /><div><small>{t('Time')}</small>{hhmm(o.start_time)} – {hhmm(o.end_time)}</div></li>
     </ul>
+    {showCodes && <section className="wp-codes" aria-label="Job codes">
+      <h3>{t('Your codes for the customer')}</h3>
+      <p>{t('Do not share these on the phone before you arrive. Show or tell the customer the code at the right time.')}</p>
+      {[['start', 'Start code', 'Give this to the customer when you reach the place', 1], ['finish', 'Finish code', 'Give this to the customer after the work is done and the customer has paid', 2]].map(([k, title, hint, n]) => {
+        const c = codes?.[k];
+        return <div key={k} className={`wp-codebox ${c?.used ? 'used' : ''} ${k}`}>
+          <span className="wp-codenum">{c?.used ? '✓' : n}</span>
+          <div><b>{t(title)}</b><div className="wp-codeval">{c?.used ? t('Used') : (c?.code ? c.code.replace(/(\d{3})(\d{3})/, '$1 $2') : '··· ···')}</div><small>{t(hint)}</small></div>
+        </div>;
+      })}
+      <button className="wp-btn outline" disabled={busy} onClick={renew}><Icon name="clock" size={18} />{t('Create new codes')}</button>
+    </section>}
     {!o.applied && (o.kind === 'shift' || ['Filled', 'Ongoing'].includes(o.status)) && <section className="wp-client-map" aria-label="Customer location map">
-      <div className="wp-client-map-title"><Icon name="map-pin" size={20} /><div><b>Customer location</b><small>{o.location || 'Destination for this order'}</small></div></div>
+      <div className="wp-client-map-title"><Icon name="map-pin" size={20} /><div><b>Customer location</b><small>{o.location || 'Destination for this order'}</small>{o.kind === 'job' && o.status === 'Ongoing' && <small className="wp-gps-live">Live GPS sharing active for this assignment</small>}</div></div>
       {mapPreviewUrl(o) ? <iframe title={`Customer location for ${o.title}`} src={mapPreviewUrl(o)} loading="lazy" referrerPolicy="no-referrer-when-downgrade" allowFullScreen /> : <div className="wp-map-fallback"><Icon name="map" size={28} /><span>Map preview is unavailable because GPS coordinates were not saved. You can still open the address in Google Maps.</span></div>}
       <a className="wp-btn primary" href={mapUrl(o)} target="_blank" rel="noopener noreferrer"><Icon name="navigation" size={18} />Navigate to customer</a>
     </section>}
-    {canVerify && <div className="wp-verify">
-      <label><span>{t('Enter the 6 digit code from the customer')}</span>
-        <input inputMode="numeric" autoComplete="one-time-code" maxLength="6" value={code} placeholder="••••••" onChange={e => setCode(e.target.value.replace(/\D/g, ''))} /></label>
-      <button className="wp-btn primary" disabled={busy || code.length !== 6} onClick={verify}><Icon name="pin" size={20} />{t('I reached the place')}</button>
-    </div>}
-    {canFinish && <button className="wp-btn primary" disabled={busy} onClick={finish}><Icon name="check" size={20} />{t('My work is finished')}</button>}
     {o.applied && <button className="wp-btn ghost" disabled={busy} onClick={withdraw}><Icon name="x" size={18} />{t('Withdraw')}</button>}
     {live && <div className="wp-pair">
       <button className="wp-btn outline danger" onClick={() => setHelp(true)}><Icon name="lifebuoy" size={18} />{t('Need help')}</button>
