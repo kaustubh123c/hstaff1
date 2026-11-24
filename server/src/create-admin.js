@@ -1,3 +1,4 @@
+
 import readline from 'node:readline';
 import { stdin, stdout } from 'node:process';
 import { pool } from './db-postgres.js';
@@ -15,9 +16,7 @@ function question(prompt) {
 
 function hiddenQuestion(prompt) {
   if (!stdin.isTTY || typeof stdin.setRawMode !== 'function') {
-    throw new Error(
-      'Run this command in a real terminal so the password can be entered securely.'
-    );
+    throw new Error('Run this command in a real terminal.');
   }
 
   stdout.write(prompt);
@@ -26,30 +25,39 @@ function hiddenQuestion(prompt) {
 
   return new Promise((resolve, reject) => {
     let value = '';
+    let finished = false;
 
     const finish = (error) => {
+      if (finished) return;
+      finished = true;
       stdin.off('data', onData);
       stdin.setRawMode(false);
-      stdout.write('\\n');
+      stdout.write('\n');
+
       if (error) reject(error);
       else resolve(value);
     };
 
-    const onData = chunk => {
+    const onData = (chunk) => {
       for (const char of chunk.toString('utf8')) {
-        if (char === '\\u0003') {
+        if (char === '\u0003') {
           finish(new Error('Admin creation cancelled.'));
           return;
         }
-        if (char === '\\r' || char === '\\n') {
+
+        if (char === '\r' || char === '\n') {
           finish();
           return;
         }
-        if (char === '\\u007f' || char === '\\b') {
+
+        if (char === '\u007f' || char === '\b') {
           value = value.slice(0, -1);
           continue;
         }
-        if (char >= ' ' && char <= '~') value += char;
+
+        if (char >= ' ' && char <= '~') {
+          value += char;
+        }
       }
     };
 
@@ -59,21 +67,22 @@ function hiddenQuestion(prompt) {
 
 try {
   console.log('Create your initial H-Staff administrator account.');
-  console.log('Password input is hidden. This command does not reset existing accounts.\\n');
 
   const name = await question('Admin name: ');
   const email = await question('Admin email: ');
-  const password = await hiddenQuestion('Admin password (12-100 characters): ');
+  const password = await hiddenQuestion(
+    'Admin password (12-100 characters): '
+  );
 
   const id = await createAdminAccountPostgres(
     { name, email, password },
     { source: 'private PostgreSQL provisioning command' }
   );
 
-  console.log(`\\nAdmin account created successfully (user id: ${id}).`);
-  console.log('Use the email and password you entered on the Admin Sign In page.');
+  console.log(`Admin account created successfully (user id: ${id}).`);
+  console.log('Use your email and password on the Admin Sign In page.');
 } catch (error) {
-  console.error('\\nAdmin creation failed:', error.message);
+  console.error('Admin creation failed:', error.message);
   process.exitCode = 1;
 } finally {
   await pool.end();
