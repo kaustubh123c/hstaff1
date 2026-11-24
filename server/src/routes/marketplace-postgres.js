@@ -311,6 +311,21 @@ router.post('/jobs/:id/request', requireRole('worker'), wrap(async (req, res) =>
         attempts=0,consumed_at=NULL
     `, [id, hash(id, code), encrypt(id, code), expiresAt]);
 
+    // Prepare the finish code at acceptance; it is shown only in the worker portal
+    // and is verified by the business after payment.
+    const finishCode = String(crypto.randomInt(100000, 1000000));
+    const finishExpires = timestamp(new Date(Date.now() + 24 * 60 * 60 * 1000));
+    await client.query(`
+      INSERT INTO job_verifications
+        (shift_id,purpose,code_hash,code_ciphertext,expires_at)
+      VALUES($1,'finish',$2,$3,$4)
+      ON CONFLICT(shift_id,purpose) DO UPDATE SET
+        code_hash=EXCLUDED.code_hash,
+        code_ciphertext=EXCLUDED.code_ciphertext,
+        expires_at=EXCLUDED.expires_at,
+        attempts=0,consumed_at=NULL
+    `, [id, hash(id, finishCode), encrypt(id, finishCode), finishExpires]);
+
     await client.query('UPDATE workers SET available=false WHERE user_id=$1', [req.user.id]);
 
     output = {
@@ -430,6 +445,75 @@ router.post('/jobs/:id/otp/start/resend', requireRole('business'), wrap(async (r
   res.json({ otp: code, expires_at: expires, development: true });
 }));
 
+
+// Worker-only view of the two job codes. Codes are never returned to the business API.
+router.get('/jobs/:id/codes', requireRole('worker'), wrap(async (req, res) => {
+  const id = parseId(req.params.id);
+  const s = await job(id);
+  if (!s) throw notFound('Job not found');
+  const assigned = await query(
+    "SELECT 1 FROM applications WHERE shift_id=$1 AND worker_id=$2 AND status='Accepted'",
+    [id, req.user.id]
+  );
+  if (!assigned.rows.length) throw forbidden();
+  if (!['Filled', 'Ongoing'].includes(s.status)) throw conflict('Codes are only available for active jobs.');
+
+  const result = await query(
+    "SELECT purpose,code_ciphertext,consumed_at,expires_at FROM job_verifications WHERE shift_id=$1 AND purpose IN ('start','finish')",
+    [id]
+  );
+  const values = Object.fromEntries(result.rows.map(v => [v.purpose, {
+    code: v.code_ciphertext && !v.consumed_at && new Date(v.expires_at).getTime() > Date.now()
+      ? decrypt(id, v.code_ciphertext) : null,
+    used: Boolean(v.consumed_at)
+  }]));
+  res.json({
+    status: s.status,
+    start: values.start || { code: null, used: false },
+    finish: values.finish || { code: null, used: false }
+  });
+}));
+
+router.post('/jobs/:id/codes/regenerate', requireRole('worker'), wrap(async (req, res) => {
+  const id = parseId(req.params.id);
+  const s = await job(id);
+  if (!s) throw notFound('Job not found');
+  const assigned = await query(
+    "SELECT 1 FROM applications WHERE shift_id=$1 AND worker_id=$2 AND status='Accepted'",
+    [id, req.user.id]
+  );
+  if (!assigned.rows.length) throw forbidden();
+  if (!['Filled', 'Ongoing'].includes(s.status)) throw conflict('Codes are only available for active jobs.');
+  const purposes = s.status === 'Filled' ? ['start', 'finish'] : ['finish'];
+  await tx(async client => {
+    for (const purpose of purposes) {
+      const code = String(crypto.randomInt(100000, 1000000));
+      const expires = timestamp(new Date(Date.now() + (purpose === 'start' ? 10 : 24 * 60) * 60000));
+      await client.query(`
+        INSERT INTO job_verifications
+          (shift_id,purpose,code_hash,code_ciphertext,expires_at)
+        VALUES($1,$2,$3,$4,$5)
+        ON CONFLICT(shift_id,purpose) DO UPDATE SET
+          code_hash=EXCLUDED.code_hash,code_ciphertext=EXCLUDED.code_ciphertext,
+          expires_at=EXCLUDED.expires_at,attempts=0,consumed_at=NULL,delivery_status='pending'
+      `, [id, purpose, hash(id, code), encrypt(id, code), expires]);
+      if (purpose === 'start') {
+        await client.query('UPDATE shifts SET start_otp_hash=$1 WHERE id=$2', [hash(id, code), id]);
+      }
+    }
+  });
+  if (s.status === 'Filled' && config.otpSmsConfigured) {
+    const owner = await query('SELECT phone FROM users WHERE id=$1', [s.business_id]);
+    if (owner.rows[0]?.phone) {
+      const codeRow = await query("SELECT code_ciphertext FROM job_verifications WHERE shift_id=$1 AND purpose='start'", [id]);
+      await sendSms(owner.rows[0].phone, `H-Staff job ${id} arrival code: ${decrypt(id, codeRow.rows[0].code_ciphertext)}. Expires in 10 minutes.`);
+      await query("UPDATE job_verifications SET delivery_status='sent' WHERE shift_id=$1 AND purpose='start'", [id]);
+    }
+  }
+  await audit(req, 'ondemand.codes_regenerated', 'shift', id);
+  res.json({ ok: true });
+}));
+
 router.post('/jobs/:id/verify-start', requireRole('worker'), wrap(async (req, res) => {
   const id = parseId(req.params.id);
   const { otp } = z.object({ otp: z.string().regex(/^\d{6}$/) }).parse(req.body);
@@ -489,6 +573,61 @@ router.post('/jobs/:id/verify-start', requireRole('worker'), wrap(async (req, re
 
   await audit(req, 'ondemand.start_verified', 'shift', id);
   res.json({ ok: true, status: 'Ongoing' });
+}));
+
+
+router.post('/jobs/:id/verify-finish', requireRole('business'), wrap(async (req, res) => {
+  const id = parseId(req.params.id);
+  const { otp } = z.object({ otp: z.string().regex(/^\d{6}$/) }).parse(req.body);
+  let invalid = false;
+  let output = null;
+  await tx(async client => {
+    const found = await client.query(`
+      SELECT s.*,a.worker_id
+      FROM shifts s JOIN applications a ON a.shift_id=s.id AND a.status='Accepted'
+      WHERE s.id=$1 AND s.job_type='ondemand'
+      FOR UPDATE OF s
+    `, [id]);
+    const s = found.rows[0];
+    if (!s) throw notFound('Job not found');
+    if (String(s.business_id) !== String(req.user.id)) throw forbidden();
+    if (s.status !== 'Ongoing') throw conflict('This job has not been started.');
+    const payment = await client.query('SELECT * FROM job_payments WHERE shift_id=$1 FOR UPDATE', [id]);
+    const pay = payment.rows[0];
+    if (!pay || pay.status !== 'paid') throw conflict(`Please complete payment before finishing this job${pay?.amount ? ` (₹${pay.amount})` : ''}.`);
+    const vResult = await client.query(
+      "SELECT * FROM job_verifications WHERE shift_id=$1 AND purpose='finish' FOR UPDATE", [id]
+    );
+    const v = vResult.rows[0];
+    if (!v || v.consumed_at || new Date(v.expires_at).getTime() <= Date.now()) {
+      throw bad('Finish code expired. Ask the worker to create a new code.');
+    }
+    if (Number(v.attempts) >= 5) throw new HttpError(429, 'Too many incorrect attempts.');
+    const a = Buffer.from(hash(id, otp));
+    const b = Buffer.from(v.code_hash);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      await client.query('UPDATE job_verifications SET attempts=attempts+1 WHERE id=$1', [v.id]);
+      invalid = true;
+      return;
+    }
+    const consumed = await client.query(`
+      UPDATE job_verifications SET consumed_at=NOW(),code_ciphertext=NULL
+      WHERE id=$1 AND consumed_at IS NULL AND attempts<5 AND expires_at>NOW()
+      RETURNING id
+    `, [v.id]);
+    if (!consumed.rows.length) throw conflict('Finish code expired or already used.');
+    await client.query(
+      "UPDATE shifts SET status='Completed',completion_requested_at=COALESCE(completion_requested_at,NOW()) WHERE id=$1 AND status='Ongoing'",
+      [id]
+    );
+    await client.query('UPDATE workers SET available=false WHERE user_id=$1', [s.worker_id]);
+    await client.query('DELETE FROM job_locations WHERE shift_id=$1', [id]);
+    await notify(s.worker_id, 'Finish code verified. Your job is complete.');
+    output = { amount: Number(pay.amount), fee: Number(pay.fee) };
+  });
+  if (invalid) throw bad('Finish code is incorrect.');
+  await audit(req, 'ondemand.finish_verified', 'shift', id);
+  res.json({ ok: true, status: 'Completed', ...output });
 }));
 
 router.post('/jobs/:id/location', requireRole('worker'), wrap(async (req, res) => {
